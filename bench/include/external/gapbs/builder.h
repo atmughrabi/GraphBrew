@@ -552,7 +552,7 @@ public:
         if (explicit_num_nodes == -1 && el.empty())
             throw std::invalid_argument(
                 "empty edge-list input has no explicit vertex count; "
-                "use .sg/.wsg or a sized .mtx/.graph input");
+                "use a '# Nodes: N' header or sized .sg/.wsg/.mtx/.graph input");
         const uint64_t node_limit = std::min<uint64_t>(
             std::numeric_limits<int64_t>::max(),
             std::numeric_limits<NodeID_>::max());
@@ -576,7 +576,13 @@ public:
             throw std::invalid_argument("explicit vertex count exceeds the index type");
         num_nodes_ = explicit_num_nodes >= 0
             ? explicit_num_nodes : static_cast<int64_t>(inferred_nodes);
-        return MakeGraphFromEL(el);
+        DestID_ **index = nullptr, **inv_index = nullptr;
+        DestID_ *neighs = nullptr, *inv_neighs = nullptr;
+        MakeCSR(el, false, &index, &neighs);
+        if constexpr (invert)
+            MakeCSR(el, true, &inv_index, &inv_neighs);
+        return CSRGraph<NodeID_, DestID_, invert>(
+            num_nodes_, index, neighs, inv_index, inv_neighs);
     }
 
     pvector<NodeID_> CountLocalDegrees(const EdgeList &el, bool transpose, int64_t num_nodes_local = -1)
@@ -817,7 +823,8 @@ public:
             EdgeList el;
             if (cli_.filename() != "")
             {
-                Reader<NodeID_, DestID_, WeightT_, invert> r(cli_.filename());
+                Reader<NodeID_, DestID_, WeightT_, invert> r(
+                    cli_.filename(), preserve_input_edges);
                 if ((r.GetSuffix() == ".sg") || (r.GetSuffix() == ".wsg"))
                 {
                     g_final = r.ReadSerializedGraph();

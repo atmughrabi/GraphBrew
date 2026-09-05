@@ -99,7 +99,7 @@ public:
         if (!directed_)
             std::cout << "un";
         std::cout << "directed edges for degree: ";
-        std::cout << num_edges_ / num_nodes_;
+        std::cout << (num_nodes_ == 0 ? 0 : num_edges_ / num_nodes_);
 
         // Calculate and output the total size in megabytes
         size_t total_size =
@@ -412,7 +412,7 @@ public:
         if (!directed_)
             std::cout << "un";
         std::cout << "directed edges for degree: ";
-        std::cout << num_edges_ / num_nodes_;
+        std::cout << (num_nodes_ == 0 ? 0 : num_edges_ / num_nodes_);
 
         // Calculate and output the total size in megabytes
         size_t total_size =

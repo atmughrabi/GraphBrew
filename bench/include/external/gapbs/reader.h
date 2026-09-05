@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <cstring> // for std::strtok
@@ -35,9 +36,42 @@ typedef EdgePair<NodeID_, DestID_> Edge;
 typedef pvector<Edge> EdgeList;
 std::string filename_;
 int64_t explicit_num_nodes_ = -1;
+bool read_el_vertex_count_ = false;
+
+NodeID_ ReadELVertex(const std::string &token) {
+  std::istringstream value_stream(token);
+  NodeID_ value;
+  if (token.empty() || token[0] == '-' || !(value_stream >> value) ||
+      value_stream.peek() != std::char_traits<char>::eof())
+    throw std::invalid_argument("invalid preserved edge-list vertex");
+  return value;
+}
+
+void ReadELVertexCount(const std::string &line) {
+  if (!read_el_vertex_count_)
+    return;
+  const auto first = line.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos || line.compare(first, 8, "# Nodes:") != 0)
+    return;
+  std::istringstream header(line.substr(first + 8));
+  int64_t count;
+  if (!(header >> count) || count < 0)
+    throw std::invalid_argument("invalid edge-list vertex-count header");
+  std::string tail;
+  if (header >> tail) {
+    int64_t edges;
+    std::string extra;
+    if (tail != "Edges:" || !(header >> edges) || edges < 0 || (header >> extra))
+      throw std::invalid_argument("invalid edge-list vertex-count header");
+  }
+  if (explicit_num_nodes_ >= 0 && explicit_num_nodes_ != count)
+    throw std::invalid_argument("conflicting edge-list vertex-count headers");
+  explicit_num_nodes_ = count;
+}
 
 public:
-explicit Reader(std::string filename) : filename_(filename) {
+explicit Reader(std::string filename, bool read_el_vertex_count = false)
+    : filename_(filename), read_el_vertex_count_(read_el_vertex_count) {
 }
 
 std::string GetSuffix() {
@@ -76,13 +110,18 @@ EdgeList ReadInEL(std::ifstream &in) {
   std::string line;
 
   while (std::getline(in, line)) {
-    // Check if the line is empty or starts with % or #
-    if (line.empty() || line[0] == '%' || line[0] == '#')
+    ReadELVertexCount(line);
+    const auto first = line.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos || line[first] == '%' || line[first] == '#')
       continue;
 
-    // Use a stringstream to read node ids from the line
     std::istringstream iss(line);
-    if (iss >> u >> v) {
+    if (read_el_vertex_count_) {
+      std::string source, destination;
+      if (!(iss >> source >> destination))
+        throw std::invalid_argument("preserved edge-list row requires two vertices");
+      el.push_back(Edge(ReadELVertex(source), ReadELVertex(destination)));
+    } else if (iss >> u >> v) {
       el.push_back(Edge(u, v));
     }
   }
@@ -153,13 +192,19 @@ EdgeList ReadInWEL(std::ifstream &in) {
   std::string line;
 
   while (std::getline(in, line)) {
-    // Check if the line is empty or starts with % or #
-    if (line.empty() || line[0] == '%' || line[0] == '#')
+    ReadELVertexCount(line);
+    const auto first = line.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos || line[first] == '%' || line[first] == '#')
       continue;
 
-    // Use a stringstream to read node id and node weight from the line
     std::istringstream iss(line);
-    if (iss >> u >> v) {
+    if (read_el_vertex_count_) {
+      std::string source, destination;
+      if (!(iss >> source >> destination >> v.w))
+        throw std::invalid_argument("preserved weighted row requires two vertices and a weight");
+      v.v = ReadELVertex(destination);
+      el.push_back(Edge(ReadELVertex(source), v));
+    } else if (iss >> u >> v) {
       el.push_back(Edge(u, v));
     }
   }

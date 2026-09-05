@@ -44,6 +44,7 @@
 #include <fstream>
 #include <functional>
 #include <iomanip>
+#include <limits>
 #include <map>
 #include <mutex>
 #include <numeric>
@@ -52,6 +53,7 @@
 #include <queue>
 #include <set>
 #include <sstream>
+#include <stdexcept>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
@@ -145,6 +147,12 @@ using namespace edge_list;
 
 #include <leiden/main.hxx>
 
+enum class GraphInputPolicy
+{
+    kDefault,
+    kPreserveDirectedEdges,
+};
+
 template <typename NodeID_, typename DestID_ = NodeID_,
           typename WeightT_ = NodeID_, bool invert = true,
           typename FNodeID_ = NodeID_, typename FDestID_ = NodeID_>
@@ -159,6 +167,19 @@ class BuilderBase
     bool in_place_ = false;
     int64_t num_nodes_ = -1;
     std::vector<std::pair<ReorderingAlgo, std::string>> reorder_options_;
+
+    void ValidatePreservedInputOptions() const
+    {
+        if (symmetrize_)
+            throw std::invalid_argument(
+                "preserved directed-edge input cannot be symmetrized");
+        if (in_place_)
+            throw std::invalid_argument(
+                "preserved directed-edge input cannot use in-place building");
+        if (!cli_.reorder_options().empty())
+            throw std::invalid_argument(
+                "preserved directed-edge input cannot be reordered");
+    }
 
 public:
     explicit BuilderBase(const CLBase &cli) : cli_(cli)
@@ -521,6 +542,43 @@ public:
                     inv_index, inv_neighs);
     }
 
+    CSRGraph<NodeID_, DestID_, invert> MakeGraphFromELPreservingInput(
+        EdgeList &el,
+        int64_t explicit_num_nodes = -1)
+    {
+        ValidatePreservedInputOptions();
+        if (explicit_num_nodes < -1)
+            throw std::invalid_argument("explicit vertex count cannot be negative");
+        if (explicit_num_nodes == -1 && el.empty())
+            throw std::invalid_argument(
+                "empty edge-list input has no explicit vertex count; "
+                "use .sg/.wsg or a sized .mtx/.graph input");
+        const uint64_t node_limit = std::min<uint64_t>(
+            std::numeric_limits<int64_t>::max(),
+            std::numeric_limits<NodeID_>::max());
+        uint64_t inferred_nodes = 0;
+        for (const Edge &edge : el)
+        {
+            const NodeID_ source = edge.u;
+            const NodeID_ destination = static_cast<NodeID_>(edge.v);
+            if constexpr (std::is_signed<NodeID_>::value)
+                if (source < 0 || destination < 0)
+                    throw std::invalid_argument("preserved input has a negative vertex");
+            const uint64_t highest = std::max<uint64_t>(source, destination);
+            if (highest >= node_limit ||
+                (explicit_num_nodes >= 0 &&
+                 highest >= static_cast<uint64_t>(explicit_num_nodes)))
+                throw std::invalid_argument("preserved edge exceeds the vertex domain");
+            inferred_nodes = std::max(inferred_nodes, highest + 1);
+        }
+        if (explicit_num_nodes >= 0 &&
+            static_cast<uint64_t>(explicit_num_nodes) > node_limit)
+            throw std::invalid_argument("explicit vertex count exceeds the index type");
+        num_nodes_ = explicit_num_nodes >= 0
+            ? explicit_num_nodes : static_cast<int64_t>(inferred_nodes);
+        return MakeGraphFromEL(el);
+    }
+
     pvector<NodeID_> CountLocalDegrees(const EdgeList &el, bool transpose, int64_t num_nodes_local = -1)
     {
         pvector<NodeID_> degrees(num_nodes_local, 0);
@@ -741,8 +799,16 @@ public:
         }
     }
 
-    CSRGraph<NodeID_, DestID_, invert> MakeGraph()
+    CSRGraph<NodeID_, DestID_, invert> MakeGraph(
+        GraphInputPolicy input_policy = GraphInputPolicy::kDefault)
     {
+        const bool preserve_input_edges =
+            input_policy == GraphInputPolicy::kPreserveDirectedEdges;
+        if (preserve_input_edges && cli_.filename().empty())
+            throw std::invalid_argument(
+                "preserved directed-edge input requires an explicit graph file");
+        if (preserve_input_edges)
+            ValidatePreservedInputOptions();
         CSRGraph<NodeID_, DestID_, invert> g;
         CSRGraph<NodeID_, DestID_, invert> g_final;
         bool gContinue_ = true; // Control variable to exit the scope
@@ -760,6 +826,8 @@ public:
                 else
                 {
                     el = r.ReadFile(needs_weights_);
+                    if (preserve_input_edges && r.explicit_num_nodes() >= 0)
+                        num_nodes_ = r.explicit_num_nodes();
                 }
             }
             else if (cli_.scale() != -1)
@@ -769,13 +837,15 @@ public:
             }
             if (gContinue_)
             {
-                g = MakeGraphFromEL(el);
+                g = preserve_input_edges
+                    ? MakeGraphFromELPreservingInput(el, num_nodes_)
+                    : MakeGraphFromEL(el);
             }
         }
 
         if (gContinue_)
         {
-            if (in_place_)
+            if (in_place_ || preserve_input_edges)
                 g_final = std::move(g);
             else
                 g_final = SquishGraph(g);

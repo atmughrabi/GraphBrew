@@ -34,6 +34,7 @@ class Reader {
 typedef EdgePair<NodeID_, DestID_> Edge;
 typedef pvector<Edge> EdgeList;
 std::string filename_;
+int64_t explicit_num_nodes_ = -1;
 
 public:
 explicit Reader(std::string filename) : filename_(filename) {
@@ -46,6 +47,10 @@ std::string GetSuffix() {
     std::exit(-1);
   }
   return filename_.substr(suff_pos);
+}
+
+int64_t explicit_num_nodes() const {
+  return explicit_num_nodes_;
 }
 
 // Function to get the size of a file
@@ -194,6 +199,7 @@ EdgeList ReadInMetis(std::ifstream &in, bool &needs_weights) {
       std::getline(in, line, '\n');
       std::istringstream header_stream(line);
       header_stream >> num_nodes >> num_edges;
+      explicit_num_nodes_ = num_nodes;
       header_stream >> std::ws;
       if (!header_stream.eof()) {
         int32_t fmt;
@@ -298,6 +304,7 @@ EdgeList ReadInMTX(std::ifstream &in, bool &needs_weights) {
     std::cout << "matrix must be square for .mtx" << std::endl;
     std::exit(-26);
   }
+  explicit_num_nodes_ = m;
 
   while (std::getline(in, line)) {
     if (line.empty())
@@ -456,6 +463,7 @@ CSRGraph<NodeID_, DestID_, invert> ReadSerializedGraph() {
   file.read(reinterpret_cast<char *>(&directed), sizeof(bool));
   file.read(reinterpret_cast<char *>(&num_edges), sizeof(SGOffset));
   file.read(reinterpret_cast<char *>(&num_nodes), sizeof(SGOffset));
+  explicit_num_nodes_ = static_cast<int64_t>(num_nodes);
   pvector<SGOffset> offsets(num_nodes + 1);
   neighs = new DestID_[num_edges];
   std::streamsize num_index_bytes = (num_nodes + 1) * sizeof(SGOffset);

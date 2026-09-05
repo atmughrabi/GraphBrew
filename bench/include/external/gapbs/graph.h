@@ -149,7 +149,7 @@ template <typename NodeID_, typename WeightT_> struct NodeWeight
         return v == rhs;
     }
 
-    operator NodeID_()
+    operator NodeID_() const
     {
         return v;
     }

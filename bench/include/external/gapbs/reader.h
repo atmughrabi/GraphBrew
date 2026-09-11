@@ -36,20 +36,18 @@ typedef EdgePair<NodeID_, DestID_> Edge;
 typedef pvector<Edge> EdgeList;
 std::string filename_;
 int64_t explicit_num_nodes_ = -1;
-bool read_el_vertex_count_ = false;
+bool strict_el_vertices_ = false;
 
 NodeID_ ReadELVertex(const std::string &token) {
   std::istringstream value_stream(token);
   NodeID_ value;
   if (token.empty() || token[0] == '-' || !(value_stream >> value) ||
       value_stream.peek() != std::char_traits<char>::eof())
-    throw std::invalid_argument("invalid preserved edge-list vertex");
+    throw std::invalid_argument("invalid edge-list vertex");
   return value;
 }
 
 void ReadELVertexCount(const std::string &line) {
-  if (!read_el_vertex_count_)
-    return;
   const auto first = line.find_first_not_of(" \t\r\n");
   if (first == std::string::npos || line.compare(first, 8, "# Nodes:") != 0)
     return;
@@ -70,8 +68,8 @@ void ReadELVertexCount(const std::string &line) {
 }
 
 public:
-explicit Reader(std::string filename, bool read_el_vertex_count = false)
-    : filename_(filename), read_el_vertex_count_(read_el_vertex_count) {
+explicit Reader(std::string filename, bool strict_el_vertices = false)
+    : filename_(filename), strict_el_vertices_(strict_el_vertices) {
 }
 
 std::string GetSuffix() {
@@ -116,10 +114,10 @@ EdgeList ReadInEL(std::ifstream &in) {
       continue;
 
     std::istringstream iss(line);
-    if (read_el_vertex_count_) {
+    if (strict_el_vertices_ || explicit_num_nodes_ >= 0) {
       std::string source, destination;
       if (!(iss >> source >> destination))
-        throw std::invalid_argument("preserved edge-list row requires two vertices");
+        throw std::invalid_argument("edge-list row requires two vertices");
       el.push_back(Edge(ReadELVertex(source), ReadELVertex(destination)));
     } else if (iss >> u >> v) {
       el.push_back(Edge(u, v));
@@ -198,10 +196,10 @@ EdgeList ReadInWEL(std::ifstream &in) {
       continue;
 
     std::istringstream iss(line);
-    if (read_el_vertex_count_) {
+    if (strict_el_vertices_ || explicit_num_nodes_ >= 0) {
       std::string source, destination;
       if (!(iss >> source >> destination >> v.w))
-        throw std::invalid_argument("preserved weighted row requires two vertices and a weight");
+        throw std::invalid_argument("weighted row requires two vertices and a weight");
       v.v = ReadELVertex(destination);
       el.push_back(Edge(ReadELVertex(source), v));
     } else if (iss >> u >> v) {

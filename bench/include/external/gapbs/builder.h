@@ -181,6 +181,35 @@ class BuilderBase
                 "preserved directed-edge input cannot be reordered");
     }
 
+    static int64_t ResolveVertexCount(const EdgeList &el, int64_t explicit_num_nodes)
+    {
+        if (explicit_num_nodes < -1)
+            throw std::invalid_argument("explicit vertex count cannot be negative");
+        const uint64_t node_limit = std::min<uint64_t>(
+            std::numeric_limits<int64_t>::max(),
+            std::numeric_limits<NodeID_>::max());
+        if (explicit_num_nodes >= 0 &&
+            static_cast<uint64_t>(explicit_num_nodes) > node_limit)
+            throw std::invalid_argument("explicit vertex count exceeds the index type");
+        uint64_t inferred_nodes = 0;
+        for (const Edge &edge : el)
+        {
+            const NodeID_ source = edge.u;
+            const NodeID_ destination = static_cast<NodeID_>(edge.v);
+            if constexpr (std::is_signed<NodeID_>::value)
+                if (source < 0 || destination < 0)
+                    throw std::invalid_argument("edge-list input has a negative vertex");
+            const uint64_t highest = std::max<uint64_t>(source, destination);
+            if (highest >= node_limit ||
+                (explicit_num_nodes >= 0 &&
+                 highest >= static_cast<uint64_t>(explicit_num_nodes)))
+                throw std::invalid_argument("edge exceeds the vertex domain");
+            inferred_nodes = std::max(inferred_nodes, highest + 1);
+        }
+        return explicit_num_nodes >= 0
+            ? explicit_num_nodes : static_cast<int64_t>(inferred_nodes);
+    }
+
 public:
     explicit BuilderBase(const CLBase &cli) : cli_(cli)
     {
@@ -518,6 +547,8 @@ public:
         t.Start();
         if (num_nodes_ == -1)
             num_nodes_ = FindMaxNodeID(el) + 1;
+        else
+            num_nodes_ = ResolveVertexCount(el, num_nodes_);
         if (needs_weights_)
             Generator<NodeID_, DestID_, WeightT_>::InsertWeights(el);
         if (in_place_)
@@ -553,29 +584,7 @@ public:
             throw std::invalid_argument(
                 "empty edge-list input has no explicit vertex count; "
                 "use a '# Nodes: N' header or sized .sg/.wsg/.mtx/.graph input");
-        const uint64_t node_limit = std::min<uint64_t>(
-            std::numeric_limits<int64_t>::max(),
-            std::numeric_limits<NodeID_>::max());
-        uint64_t inferred_nodes = 0;
-        for (const Edge &edge : el)
-        {
-            const NodeID_ source = edge.u;
-            const NodeID_ destination = static_cast<NodeID_>(edge.v);
-            if constexpr (std::is_signed<NodeID_>::value)
-                if (source < 0 || destination < 0)
-                    throw std::invalid_argument("preserved input has a negative vertex");
-            const uint64_t highest = std::max<uint64_t>(source, destination);
-            if (highest >= node_limit ||
-                (explicit_num_nodes >= 0 &&
-                 highest >= static_cast<uint64_t>(explicit_num_nodes)))
-                throw std::invalid_argument("preserved edge exceeds the vertex domain");
-            inferred_nodes = std::max(inferred_nodes, highest + 1);
-        }
-        if (explicit_num_nodes >= 0 &&
-            static_cast<uint64_t>(explicit_num_nodes) > node_limit)
-            throw std::invalid_argument("explicit vertex count exceeds the index type");
-        num_nodes_ = explicit_num_nodes >= 0
-            ? explicit_num_nodes : static_cast<int64_t>(inferred_nodes);
+        num_nodes_ = ResolveVertexCount(el, explicit_num_nodes);
         DestID_ **index = nullptr, **inv_index = nullptr;
         DestID_ *neighs = nullptr, *inv_neighs = nullptr;
         MakeCSR(el, false, &index, &neighs);
@@ -833,7 +842,7 @@ public:
                 else
                 {
                     el = r.ReadFile(needs_weights_);
-                    if (preserve_input_edges && r.explicit_num_nodes() >= 0)
+                    if (r.explicit_num_nodes() >= 0)
                         num_nodes_ = r.explicit_num_nodes();
                 }
             }
